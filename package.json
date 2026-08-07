@@ -1,0 +1,21 @@
+{
+  "name": "nick-live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz conversacional en vivo para Nick, narrador de La República.",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mammoth": "^1.9.0",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^5.12.2"
+  }
+}
