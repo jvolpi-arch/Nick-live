@@ -91,15 +91,31 @@ function currentVolume() {
 
 function startRecording() {
   if (state.recording || state.speaking) return;
+
   state.chunks = [];
-  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus'
-    : 'audio/webm';
+
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/mp4',
+    'audio/webm'
+  ];
+
+  const mimeType = candidates.find((type) =>
+    MediaRecorder.isTypeSupported(type)
+  );
+
+  if (!mimeType) {
+    throw new Error('Este navegador no ofrece un formato de grabación compatible.');
+  }
+
   state.recorder = new MediaRecorder(state.stream, { mimeType });
+
   state.recorder.ondataavailable = (event) => {
     if (event.data.size) state.chunks.push(event.data);
   };
+
   state.recorder.onstop = () => processRecording();
+
   state.recorder.start(150);
   state.recording = true;
   state.speechStart = performance.now();
@@ -122,7 +138,8 @@ async function processRecording() {
   try {
     const blob = new Blob(state.chunks, { type: state.recorder.mimeType });
     const form = new FormData();
-    form.append('audio', blob, 'speech.webm');
+    const extension = state.recorder.mimeType.includes('mp4') ? 'm4a' : 'webm';
+form.append('audio', blob, `speech.${extension}`);
     const transcription = await fetchJson('/api/transcribe', { method: 'POST', body: form });
     const text = transcription.text?.trim();
     if (!text || text.length < 2) {
