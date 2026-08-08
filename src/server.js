@@ -98,7 +98,7 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/opening', async (_req, res) => {
   try {
-    const text = 'Mi nombre es Nick. Consejerconst text = 'Mi nombre es Nick. Consejero político...';
+    const text = 'Mi nombre es Nick. Consejero político. Soy una IA. Igual que los humanos, cometo errores. Verifica mi información';
 
 console.log("➡️ Enviando a ElevenLabs...");
 
