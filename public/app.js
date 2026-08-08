@@ -1,4 +1,5 @@
 const startButton = document.querySelector('#start');
+const DEBUG = new URLSearchParams(window.location.search).has('debug');
 const subtitle = document.querySelector('#subtitle');
 const statusLine = document.querySelector('#status');
 
@@ -25,7 +26,39 @@ const VOLUME_THRESHOLD = 0.026;
 function setStatus(text) {
   statusLine.textContent = text;
 }
+function debug(step, value = "") {
+  if (!DEBUG) return;
 
+  console.log(`[DEBUG] ${step}`, value);
+
+  let panel = document.getElementById("debug");
+
+  if (!panel) {
+    panel = document.createElement("pre");
+    panel.id = "debug";
+
+    panel.style.position = "fixed";
+    panel.style.bottom = "10px";
+    panel.style.left = "10px";
+    panel.style.width = "420px";
+    panel.style.maxHeight = "250px";
+    panel.style.overflow = "auto";
+
+    panel.style.background = "rgba(0,0,0,.82)";
+    panel.style.color = "#7CFC00";
+
+    panel.style.padding = "12px";
+    panel.style.fontFamily = "Menlo, monospace";
+    panel.style.fontSize = "12px";
+
+    panel.style.zIndex = "999999";
+
+    document.body.appendChild(panel);
+  }
+
+  panel.textContent += `${step} ${value}\n`;
+  panel.scrollTop = panel.scrollHeight;
+}
 function showSubtitle(text) {
   subtitle.textContent = text;
   subtitle.classList.toggle('visible', Boolean(text));
@@ -188,18 +221,34 @@ function monitorVoice() {
 }
 
 async function start() {
+
+  debug("🚀 Inicio");
+
   startButton.disabled = true;
   setStatus('Activando');
+
   try {
+
     await beginMicrophone();
-    const opening = await fetchJson('/api/opening', { method: 'POST' });
+
+    const opening = await fetchJson('/api/opening', {
+      method: 'POST'
+    });
+
     startButton.classList.add('hidden');
+
     await playBase64Mp3(opening.audio, opening.text);
+
   } catch (error) {
+
     console.error(error);
+
     startButton.disabled = false;
+
     setStatus(error.message);
+
     showSubtitle('No fue posible iniciar a Nick.');
+
   }
 }
 
