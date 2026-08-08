@@ -110,7 +110,7 @@ res.json({
   text,
   audio: audio.toString("base64")
 });
-    res.json({ text, audio: audio.toString('base64') });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
