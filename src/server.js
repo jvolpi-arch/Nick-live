@@ -99,7 +99,16 @@ app.get('/api/health', (_req, res) => {
 app.post('/api/opening', async (_req, res) => {
   try {
     const text = 'Mi nombre es Nick. Consejero político. Soy una IA. Igual que los humanos, cometo errores. Verifica mi información';
-    const audio = await synthesizeSpeech(text);
+console.log("➡️ Enviando a ElevenLabs...");
+
+const audio = await synthesizeSpeech(answer);
+
+console.log("✅ ElevenLabs respondió:", audio.length);
+
+res.json({
+  text: answer,
+  audio: audio.toString("base64")
+});
     res.json({ text, audio: audio.toString('base64') });
   } catch (error) {
     console.error(error);
