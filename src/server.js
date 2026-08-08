@@ -110,15 +110,23 @@ app.post('/api/opening', async (_req, res) => {
 app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibió audio.' });
+
+console.log("========== AUDIO RECIBIDO ==========");
+console.log("Nombre:", req.file.originalname);
+console.log("MIME:", req.file.mimetype);
+console.log("Tamaño:", req.file.size);
+
     const file = new File([req.file.buffer], req.file.originalname || 'speech.webm', {
       type: req.file.mimetype || 'audio/webm'
     });
+console.log("Enviando audio a OpenAI...");
     const transcription = await openai.audio.transcriptions.create({
       file,
       model: process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe',
       language: 'es',
       prompt: 'Conversación sobre la novela La República. Nombres: Nick, Jorge Volpi, Igne Kayris, VM Lively, Leo Klein, Paul O’Keeffe.'
     });
+    console.log("Transcripción:", transcription.text);
     res.json({ text: transcription.text?.trim() || '' });
   } catch (error) {
     console.error(error);
