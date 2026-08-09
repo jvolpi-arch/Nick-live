@@ -1,10 +1,14 @@
 const startButton = document.querySelector('#start');
-const DEBUG = new URLSearchParams(window.location.search).has('debug');
 const subtitle = document.querySelector('#subtitle');
 const statusLine = document.querySelector('#status');
 
+function newSessionId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `nick-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 const state = {
-  sessionId: crypto.randomUUID(),
+  sessionId: newSessionId(),
   stream: null,
   audioContext: null,
   analyser: null,
@@ -13,9 +17,11 @@ const state = {
   listening: false,
   recording: false,
   speaking: false,
+  shouldProcess: false,
   speechStart: 0,
   lastVoice: 0,
-  raf: 0
+  raf: 0,
+  audioUnlocked: false
 };
 
 const SILENCE_MS = 850;
@@ -26,39 +32,7 @@ const VOLUME_THRESHOLD = 0.026;
 function setStatus(text) {
   statusLine.textContent = text;
 }
-function debug(step, value = "") {
-  if (!DEBUG) return;
 
-  console.log(`[DEBUG] ${step}`, value);
-
-  let panel = document.getElementById("debug");
-
-  if (!panel) {
-    panel = document.createElement("pre");
-    panel.id = "debug";
-
-    panel.style.position = "fixed";
-    panel.style.bottom = "10px";
-    panel.style.left = "10px";
-    panel.style.width = "420px";
-    panel.style.maxHeight = "250px";
-    panel.style.overflow = "auto";
-
-    panel.style.background = "rgba(0,0,0,.82)";
-    panel.style.color = "#7CFC00";
-
-    panel.style.padding = "12px";
-    panel.style.fontFamily = "Menlo, monospace";
-    panel.style.fontSize = "12px";
-
-    panel.style.zIndex = "999999";
-
-    document.body.appendChild(panel);
-  }
-
-  panel.textContent += `${step} ${value}\n`;
-  panel.scrollTop = panel.scrollHeight;
-}
 function showSubtitle(text) {
   subtitle.textContent = text;
   subtitle.classList.toggle('visible', Boolean(text));
@@ -68,6 +42,36 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function ensureSecureMicrophoneContext() {
+  const localHost = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+  if (!window.isSecureContext && !localHost) {
+    throw new Error('En iPhone, abre Nick mediante la dirección HTTPS indicada por el Mac.');
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('El navegador no permite acceder al micrófono desde esta dirección. Usa HTTPS.');
+  }
+  if (!globalThis.MediaRecorder) {
+    throw new Error('Este navegador no dispone de grabación de audio compatible.');
+  }
+}
+
+async function unlockIOSAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Este navegador no dispone de AudioContext.');
+
+  if (!state.audioContext) state.audioContext = new AudioContextClass();
+  if (state.audioContext.state === 'suspended') await state.audioContext.resume();
+
+  // iOS exige que la salida de audio se active dentro del gesto de INICIAR.
+  // Un buffer prácticamente silencioso desbloquea la reproducción posterior de Nick.
+  const buffer = state.audioContext.createBuffer(1, 1, 22050);
+  const source = state.audioContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(state.audioContext.destination);
+  source.start(0);
+  state.audioUnlocked = true;
+}
+
 async function playBase64Mp3(base64, text) {
   state.speaking = true;
   state.listening = false;
@@ -75,17 +79,38 @@ async function playBase64Mp3(base64, text) {
   showSubtitle(text);
   setStatus('Nick habla');
 
-  const audio = new Audio(`data:audio/mpeg;base64,${base64}`);
-  await audio.play();
-  await new Promise((resolve) => {
-    audio.addEventListener('ended', resolve, { once: true });
-    audio.addEventListener('error', resolve, { once: true });
-  });
-  await sleep(120);
-  showSubtitle('');
-  state.speaking = false;
-  state.listening = true;
-  setStatus('Escuchando');
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!state.audioContext) state.audioContext = new AudioContextClass();
+    if (state.audioContext.state === 'suspended') await state.audioContext.resume();
+
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+
+    // Reproducimos la voz por el mismo AudioContext que iOS desbloqueó
+    // al pulsar INICIAR. Evita el bloqueo de autoplay de un <audio> nuevo
+    // después de esperar la respuesta de la red.
+    const audioBuffer = await state.audioContext.decodeAudioData(bytes.buffer.slice(0));
+    const source = state.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(state.audioContext.destination);
+
+    await new Promise((resolve, reject) => {
+      source.onended = resolve;
+      try {
+        source.start(0);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  } finally {
+    await sleep(120);
+    showSubtitle('');
+    state.speaking = false;
+    state.listening = true;
+    setStatus('Escuchando');
+  }
 }
 
 async function fetchJson(url, options = {}) {
@@ -96,6 +121,8 @@ async function fetchJson(url, options = {}) {
 }
 
 async function beginMicrophone() {
+  ensureSecureMicrophoneContext();
+
   state.stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
@@ -105,7 +132,12 @@ async function beginMicrophone() {
     }
   });
 
-  state.audioContext = new AudioContext();
+  if (!state.audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    state.audioContext = new AudioContextClass();
+  }
+  if (state.audioContext.state === 'suspended') await state.audioContext.resume();
+
   const source = state.audioContext.createMediaStreamSource(state.stream);
   state.analyser = state.audioContext.createAnalyser();
   state.analyser.fftSize = 1024;
@@ -128,14 +160,12 @@ function startRecording() {
   state.chunks = [];
 
   const candidates = [
-    'audio/webm;codecs=opus',
     'audio/mp4',
+    'audio/webm;codecs=opus',
     'audio/webm'
   ];
 
-  const mimeType = candidates.find((type) =>
-    MediaRecorder.isTypeSupported(type)
-  );
+  const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported(type));
 
   if (!mimeType) {
     throw new Error('Este navegador no ofrece un formato de grabación compatible.');
@@ -149,8 +179,9 @@ function startRecording() {
 
   state.recorder.onstop = () => processRecording();
 
-  state.recorder.start(150);
+  state.recorder.start(250);
   state.recording = true;
+  state.shouldProcess = true;
   state.speechStart = performance.now();
   state.lastVoice = performance.now();
   setStatus('Escuchando');
@@ -169,10 +200,12 @@ async function processRecording() {
   setStatus('Procesando');
 
   try {
-    const blob = new Blob(state.chunks, { type: state.recorder.mimeType });
+    const mimeType = state.recorder?.mimeType || state.chunks[0]?.type || 'audio/mp4';
+    const blob = new Blob(state.chunks, { type: mimeType });
     const form = new FormData();
-    const extension = state.recorder.mimeType.includes('mp4') ? 'm4a' : 'webm';
-form.append('audio', blob, `speech.${extension}`);
+    const extension = mimeType.includes('mp4') ? 'm4a' : 'webm';
+    form.append('audio', blob, `speech.${extension}`);
+
     const transcription = await fetchJson('/api/transcribe', { method: 'POST', body: form });
     const text = transcription.text?.trim();
     if (!text || text.length < 2) {
@@ -199,6 +232,8 @@ form.append('audio', blob, `speech.${extension}`);
 }
 
 function monitorVoice() {
+  if (state.raf) cancelAnimationFrame(state.raf);
+
   const tick = () => {
     if (state.listening && !state.speaking && state.analyser) {
       const now = performance.now();
@@ -221,38 +256,30 @@ function monitorVoice() {
 }
 
 async function start() {
-
-  debug("🚀 Inicio");
-
   startButton.disabled = true;
   setStatus('Activando');
-
   try {
-
+    ensureSecureMicrophoneContext();
+    await unlockIOSAudio();
     await beginMicrophone();
-
-    const opening = await fetchJson('/api/opening', {
-      method: 'POST'
-    });
-
+    const opening = await fetchJson('/api/opening', { method: 'POST' });
     startButton.classList.add('hidden');
-
     await playBase64Mp3(opening.audio, opening.text);
-
   } catch (error) {
-
     console.error(error);
-
     startButton.disabled = false;
-
     setStatus(error.message);
-
-    showSubtitle('No fue posible iniciar a Nick.');
-
+    showSubtitle(error.message || 'No fue posible iniciar a Nick.');
   }
 }
 
 startButton.addEventListener('click', start);
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && state.audioContext?.state === 'suspended') {
+    try { await state.audioContext.resume(); } catch (_) { /* iOS may require another gesture */ }
+  }
+});
 
 document.addEventListener('keydown', async (event) => {
   if (event.key.toLowerCase() === 'f') {
@@ -265,7 +292,7 @@ document.addEventListener('keydown', async (event) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: state.sessionId })
     });
-    state.sessionId = crypto.randomUUID();
+    state.sessionId = newSessionId();
     setStatus('Conversación reiniciada');
   }
   if (event.key.toLowerCase() === 'e') {
